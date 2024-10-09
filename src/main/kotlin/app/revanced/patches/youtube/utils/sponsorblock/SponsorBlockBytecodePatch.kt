@@ -18,6 +18,7 @@ import app.revanced.patches.youtube.utils.resourceid.SharedResourceIdPatch
 import app.revanced.patches.youtube.utils.resourceid.SharedResourceIdPatch.InsetOverlayViewLayout
 import app.revanced.patches.youtube.utils.sponsorblock.fingerprints.RectangleFieldInvalidatorFingerprint
 import app.revanced.patches.youtube.utils.sponsorblock.fingerprints.SegmentPlaybackControllerFingerprint
+import app.revanced.patches.youtube.utils.sponsorblock.fingerprints.TimelineMarkerArrayFingerprint
 import app.revanced.patches.youtube.video.information.VideoInformationPatch
 import app.revanced.util.alsoResolve
 import app.revanced.util.getReference
@@ -44,6 +45,7 @@ object SponsorBlockBytecodePatch : BytecodePatch(
     setOf(
         SeekbarFingerprint,
         SegmentPlaybackControllerFingerprint,
+        TimelineMarkerArrayFingerprint,
         TotalTimeFingerprint,
         YouTubeControlsOverlayFingerprint
     )
@@ -130,6 +132,21 @@ object SponsorBlockBytecodePatch : BytecodePatch(
                         move-result-object v$targetRegister
                         """
                 )
+            }
+        }
+
+        // Chapter segments
+        TimelineMarkerArrayFingerprint.resultOrThrow().let {
+            it.mutableMethod.apply {
+                val replaceIndex = it.scanResult.patternScanResult!!.startIndex
+
+                addInstructions(
+                    replaceIndex + 1, """
+                        invoke-static {}, $INTEGRATIONS_SEGMENT_PLAYBACK_CONTROLLER_CLASS_DESCRIPTOR->getChapterSegments()[Lcom/google/android/libraries/youtube/player/features/overlay/timebar/TimelineMarker;
+                        move-result-object p1
+                        """
+                )
+                removeInstruction(replaceIndex)
             }
         }
 
