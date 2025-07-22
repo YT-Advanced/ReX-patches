@@ -32,56 +32,40 @@ import java.util.regex.Pattern;
 
 @TargetApi(26)
 class LocalNameSpace extends java.util.AbstractMap<String, Object> {
-    private final Map<String, Object> currentScope;
-    private final LocalNameSpace parent;
+    private final Map<String, Object> maps;
 
-    public LocalNameSpace(Map<String, Object> initialScope) {
-        this.currentScope = new HashMap<>(initialScope);
-        this.parent = null;
-    }
-
-    private LocalNameSpace(LocalNameSpace parent) {
-        this.currentScope = new HashMap<>();
-        this.parent = parent;
-    }
-
-    @Override
-    public Object get(Object key) {
-        if (currentScope.containsKey(key)) {
-            return currentScope.get(key);
-        }
-        if (parent != null) {
-            return parent.get(key);
-        }
-        return null;
+    public LocalNameSpace(Map<String, Object> maps) {
+        this.maps = maps;
     }
 
     public Object getValue(String key) {
-        return get(key);
+        return maps.get(key);
     }
 
     public Map<String, Object> getAll() {
-        Map<String, Object> allVars = new HashMap<>();
-        if (parent != null) {
-            allVars.putAll(parent.getAll());
-        }
-        allVars.putAll(currentScope);
-        return allVars;
+        return maps;
     }
 
-    public LocalNameSpace newChild() {
-        return new LocalNameSpace(this);
+    public LocalNameSpace newChild(Map<String, Object> obj) {
+        maps.putAll(obj);
+        return new LocalNameSpace(maps);
     }
 
     @NonNull
     @Override
     public String toString() {
-        return "LocalNameSpace" + getAll();
+        StringBuilder sb = new StringBuilder();
+        sb.append("LocalNameSpace {\n");
+        for (Map.Entry<String, Object> entry : maps.entrySet()) {
+            sb.append("  ").append(entry.getKey()).append(": ").append(entry.getValue()).append("\n");
+        }
+        sb.append("}");
+        return sb.toString();
     }
 
     @Override
     public Object put(String key, Object value) {
-        return currentScope.put(key, value);
+        return maps.put(key, value);
     }
 
     @Override
@@ -97,7 +81,7 @@ class LocalNameSpace extends java.util.AbstractMap<String, Object> {
     @NonNull
     @Override
     public Set<Entry<String, Object>> entrySet() {
-        return currentScope.entrySet();
+        return Collections.emptySet();
     }
 }
 
@@ -936,13 +920,13 @@ public class JsInterpreter {
                 String subExpr = result3.get(0).substring(1);
                 expr = result3.get(1);
                 if (err != null) {
-                    LocalNameSpace catchScope = localVars.newChild();
+                    Map<String, Object> catchVars = new HashMap<>();
                     if (m2.group("err") != null) {
                         String errVarName = m2.group("err").replaceAll("[()\\s]", "");
                         catchScope.put(errVarName, (err instanceof JS_Throw) ? ((JS_Throw) err).error : err);
                     }
                     err = null;
-                    pending = interpretStatement(subExpr, catchScope, allowRecursion);
+                    pending = interpretStatement(subExpr, localVars.newChild(catchVars), allowRecursion);
                 }
             }
             Matcher m4 = TRY_FINALLY_PATTERN.matcher(expr);
@@ -1717,16 +1701,16 @@ public class JsInterpreter {
         return result;
     }
 
-    private Function<Object[], Object> buildFunction(List<String> argNames, String code, Map<String, Object> globalScope) throws JS_Throw {
+    private Function<Object[], Object> buildFunction(List<String> argNames, String code, Map<String, Object> globalStack) throws JS_Throw {
         Object[] argNamesArray = argNames.toArray();
 
         return args -> {
             int allowRecursion = args.length == 1 ? 100 : (int) args[1];
-            LocalNameSpace varStack = new LocalNameSpace(globalScope);
-            varStack.putAll(zipLongest(argNamesArray, args.length == 1 ? args : (Object[]) args[0]));
+            globalStack.putAll(zipLongest(argNamesArray, args.length == 1 ? args : (Object[]) args[0]));
             if (args.length == 3) {
-                varStack.putAll(castObjectToMap(args[2]));
+                globalStack.putAll(castObjectToMap(args[2]));
             }
+            LocalNameSpace varStack = new LocalNameSpace(globalStack);
             
             StatementResult result;
             try {
