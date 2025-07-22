@@ -1,3 +1,8 @@
+// These java classes are taken from: https://github.com/felipeucelli/JavaTube/blob/ec9011fa2ed584b867d276e683c421059b87bec5/src/main/java/com/github/felipeucelli/javatube/JsInterpreter.java
+// This code is based on jsinterp.py, available at "https://github.com/yt-dlp/yt-dlp/blob/master/yt_dlp/jsinterp.py"
+// TODO: Scripts written in python have been converted to Java to run javascript.
+//       Migrate to 'eclipsesource/J2V8' or 'mozilla/rhino' for better performance.
+
 package app.revanced.extension.shared.innertube.utils;
 
 import android.annotation.TargetApi;
@@ -135,14 +140,16 @@ class FunctionWithRepr {
 @SuppressWarnings("StringBufferMayBeStringBuilder")
 class JsToJson {
     static final List<RegexAndBase> INTEGER_TABLE = new ArrayList<>();
-    private static final Pattern JS_TO_JSON_PATTERN = Pattern.compile(
-        "(?sx)'(?:\\\\.|[^\\\\'])*'|\"(?:\\\\.|[^\\\\"])*\"|`(?:\\\\.|[^\\\\`])*`|" +
-        "/\\*(?:(?!\\*/).)*?\\*/|//[^\\n]*\\n|,(?=\\s*(?:/\\*(?:(?!\\*/).)*?\\*/|//[^\\n]*\\n)?\\s*[]}])|" +
-        "void\\s0|(?:(?<![0-9])[eE]|[a-df-zA-DF-Z_$])[.a-zA-Z_$0-9]*|" +
-        "\\b(?:0[xX][0-9a-fA-F]+|0+[0-7]+)(?:\\s*(?:/\\*(?:(?!\\*/).)*?\\*/|//[^\\n]*\\n)?\\s*:)?|" +
-        "[0-9]+(?=\\s*(?:/\\*(?:(?!\\*/).)*?\\*/|//[^\\n]*\\n)?\\s*:)|" +
-        "!+"
-    );
+    private static final Pattern JS_TO_JSON_PATTERN = Pattern.compile("""
+            (?sx)
+                    '(?:\\\\.|[^\\\\'])*'|"(?:\\\\.|[^\\\\"])*"|`(?:\\\\.|[^\\\\`])*`|
+                    /\\*(?:(?!\\*/).)*?\\*/|//[^\\n]*\\n|,(?=\\s*(?:/\\*(?:(?!\\*/).)*?\\*/|//[^\\n]*\\n)?\\s*[]}])|
+                    void\\s0|(?:(?<![0-9])[eE]|[a-df-zA-DF-Z_$])[.a-zA-Z_$0-9]*|
+                    \\b(?:0[xX][0-9a-fA-F]+|0+[0-7]+)(?:\\s*(?:/\\*(?:(?!\\*/).)*?\\*/|//[^\\n]*\\n)?\\s*:)?|
+                    [0-9]+(?=\\s*(?:/\\*(?:(?!\\*/).)*?\\*/|//[^\\n]*\\n)?\\s*:)|
+                    !+
+                
+            """);
     private static final Pattern PROCESS_ESCAPES_PATTERN = Pattern.compile("(?s)(\")|\\\\(.)");
     private static final Pattern TEMPLATE_SUBSTITUTE_PATTERN = Pattern.compile("(?s)\\$\\{([^}]+)\\}");
 
@@ -314,17 +321,59 @@ public class JsInterpreter {
     private static final Map<String, BiFunction<Object, Object, Object>> UNARY_OPERATORS_X = createUnaryXOperatorsMap();
     private static final Map<String, BiFunction<Object, Object, Object>> ALL_OPERATORS = mergeOperators();
 
-    private static final Pattern STMT_IF_PATTERN = Pattern.compile("else\\s*\\{");
-    private static final Pattern STMT_TRY_CATCH_PATTERN = Pattern.compile("catch\\s*(?<err>\\(\\s*[a-zA-Z_$][\\w$]*\\s*\\))?\\{");
-    private static final Pattern STMT_TRY_FINALLY_PATTERN = Pattern.compile("^finally\\s*\\{");
-    private static final Pattern STMT_FOR_SWITCH_PATTERN = Pattern.compile("switch\\s*\\(");
-    private static final Pattern STMT_MAIN_PATTERN = Pattern.compile("(?<var>(?:^var|^const|^let)\\s)|^return(?:\\s+|(?=[\"'])|$)|(?<throw>^throw\\s+)");
-    private static final Pattern STMT_CONTROL_FLOW_PATTERN = Pattern.compile("(?x)(?<try>try)\\s*\\{|(?<if>if)\\s*\\(|(?<switch>switch)\\s*\\(|(?<for>for)\\s*\\(");
-    private static final Pattern STMT_INCREMENT_DECREMENT_PATTERN = Pattern.compile("(?x)(?<presign>\\+\\+|--)(?<var1>[a-zA-Z_$][\\w$]*)|(?<var2>[a-zA-Z_$][\\w$]*)(?<postsign>\\+\\+|--)");
-    private static final Pattern STMT_COMPLEX_PATTERN = Pattern.compile("(?x)(?<assign>(?<out>[a-zA-Z_$][\\w$]*)(?:\\[(?<index>[^\\[\\]]+(?:\\[[^\\[\\]]+(?:\\[[^\\]]+\\])?\\])?)])?\\s*(?<op>\\||\\*\\*|-|\\+|\\^|&&|\\?|/|%|\\|\\||&|>>|<<|\\*|\\?\\?)?=(?!=)(?<expr>.*)$)|(?<return>(?!if|return|true|false|null|undefined|NaN)(?<name>^[a-zA-Z_$][\\w$]*)$)|(?<attribute>(?<var>[a-zA-Z_$][\\w$]*)(?:(?<nullish>\\?)?\\.(?<member>[^(]+)|\\[(?<member2>[^\\[\\]]+(?:\\[[^\\[\\]]+(?:\\[[^\\]]+\\])?\\])?)]\\s*))|(?<indexing>(?<in>[a-zA-Z_$][\\w$]*)\\[(?<idx>.+)]$)|(?<function>(?<fname>[a-zA-Z_$][\\w$]*)\\((?<args>.*)\\)$)");
-    private static final Pattern EXTRACT_FUNCTION_CODE_PATTERN = Pattern.compile("(?x)(?s)(?:function\\s+(%s)|[{;,]\\s*(%s)\\s*=\\s*function|(?:var|const|let)\\s+(%s)\\s*=\\s*function)\\s*\\((?<args>[^)]*)\\)\\s*(?<code>\\{.+\\})");
-    private static final Pattern EXTRACT_PLAYER_JS_GLOBAL_VAR_PATTERN = Pattern.compile("(?x)(?<q1>[\\\"\\'])use\\s+strict(\\k<q1>);\\s*(?<code>var\\s+(?<name>[a-zA-Z0-9_$]+)\\s*=\\s*(?<value>(?<q2>[\\\"\\']).*?(\\k<q2>)\\.split\\((?<q3>[\\\"\\']).*?(\\k<q3>)\\)|\\[\\s*(?:(?<q4>[\\\"\\']).*?(\\k<q4>)\\s*,?\\s*)+\\]))[;,]");
-    private static final Pattern FIXUP_N_FUNCTION_CODE_PATTERN = Pattern.compile(";\\s*if\\s*\\(\\s*typeof\\s+[a-zA-Z0-9_$]+\\s*===?\\s*(['\"])undefined\\1\\s*\\)\\s*return\\s+%s;");
+    private static final Pattern IF_PATTERN = Pattern.compile("else\\s*\\{");
+    private static final Pattern TRY_CATCH_PATTERN = Pattern.compile("catch\\s*(?<err>\\(\\s*[a-zA-Z_$][\\w$]*\\s*\\))?\\{");
+    private static final Pattern TRY_FINALLY_PATTERN = Pattern.compile("^finally\\s*\\{");
+    private static final Pattern FOR_SWITCH_PATTERN = Pattern.compile("switch\\s*\\(");
+    private static final Pattern MAIN_PATTERN = Pattern.compile("""
+            (?<var>
+                    (?:^var|^const|^let)\\s)|
+                    ^return(?:\\s+|(?=[\"'])|$)|
+                    (?<throw>^throw\\s+)
+            """);
+    private static final Pattern CONTROL_FLOW_PATTERN = Pattern.compile("""
+            (?x)
+                    (?<try>try)\\s*\\{|
+                    (?<if>if)\\s*\\(|
+                    (?<switch>switch)\\s*\\(|
+                    (?<for>for)\\s*\\(
+            """);
+    private static final Pattern INCREMENT_DECREMENT_PATTERN = Pattern.compile("""
+            (?x)
+                    (?<presign>\\+\\+|--)(?<var1>[a-zA-Z_$][\\\\w$]*)|
+                    (?<var2>[a-zA-Z_$][\\w$]*)(?<postsign>\\+\\+|--)
+            """);
+    private static final Pattern JUMP_STATEMENT_PATTERN = Pattern.compile("""
+            (?x)
+                    (?<assign>
+                        (?<out>[a-zA-Z_$][\\w$]*)(?:\\[(?<index>[^\\[\\]]+(?:\\[[^\\[\\]]+(?:\\[[^\\]]+\\])?\\])?)])?\\s*
+                        (?<op>\\||\\*\\*|-|\\+|\\^|&&|\\?|/|%|\\|\\||&|>>|<<|\\*|\\?\\?)?
+                        =(?!=)(?<expr>.*)$
+                    )|(?<return>
+                        (?!if|return|true|false|null|undefined|NaN)(?<name>^[a-zA-Z_$][\\w$]*)$
+                    )|(?<attribute>
+                        (?<var>[a-zA-Z_$][\\w$]*)(?:
+                            (?<nullish>\\?)?\\.(?<member>[^(]+)|
+                            \\[(?<member2>[^\\[\\]]+(?:\\[[^\\[\\]]+(?:\\[[^\\]]+\\])?\\])?)]
+                        )\\s*
+                    )|(?<indexing>
+                        (?<in>[a-zA-Z_$][\\w$]*)\\[(?<idx>.+)]$
+                    )|(?<function>
+                        (?<fname>[a-zA-Z_$][\\w$]*)\\((?<args>.*)\\)$
+                    )
+            """);
+    private static final Pattern EXTRACT_PLAYER_JS_GLOBAL_VAR_PATTERN = Pattern.compile("""
+            (?x)
+                    (?<q1>[\\"\\'])use\\s+strict(\\k<q1>);\\s*
+                    (?<code>
+                        var\\s+(?<name>[a-zA-Z0-9_$]+)\\s*=\\s*
+                        (?<value>
+                            (?<q2>[\\"\\']).*?(\\k<q2>)
+                            \\.split\\((?<q3>[\\"\\']).*?(\\k<q3>)\\)
+                            |\\[\\s*(?:(?<q4>[\\"\\']).*?(\\k<q4>)\\s*,?\\s*)+\\]
+                        )
+                    )[;,]
+            """);
     private static final Pattern EXTRACT_FUNCTION_FROM_CODE_PATTERN = Pattern.compile("function\\((?<args>[^)]*)\\)\\s*\\{");
 
     private static Map<String, BiFunction<Object, Object, Object>> mergeOperators() {
@@ -694,7 +743,7 @@ public class JsInterpreter {
                 return new StatementResult(ret, true);
             }
         }
-        Matcher matcher = STMT_MAIN_PATTERN.matcher(stmt);
+        Matcher matcher = MAIN_PATTERN.matcher(stmt);
         if (matcher.find()) {
             expr = stmt.substring(Objects.requireNonNull(matcher.group(0)).length()).trim();
             if (matcher.group("throw") != null) {
@@ -829,10 +878,10 @@ public class JsInterpreter {
             expr = name + outer;
         }
 
-        Matcher m = STMT_CONTROL_FLOW_PATTERN.matcher(expr);
+        Matcher m = CONTROL_FLOW_PATTERN.matcher(expr);
         Map<String, String> md = new HashMap<>();
         if (m.find()) {
-            List<String> groupNames = getGroupNames(STMT_CONTROL_FLOW_PATTERN.pattern());
+            List<String> groupNames = getGroupNames(CONTROL_FLOW_PATTERN.pattern());
             for (String groupName : groupNames) {
                 String groupValue = m.group(groupName);
                 md.put(groupName, groupValue);
@@ -852,7 +901,7 @@ public class JsInterpreter {
             String ifExpr = result2.get(0).substring(1);
             expr = result2.get(1);
             String elseExpr = "";
-            Matcher m2 = STMT_IF_PATTERN.matcher(expr);
+            Matcher m2 = IF_PATTERN.matcher(expr);
             if (m2.find()) {
                 List<String> result3 = separateAtParen(expr.substring(m2.end() - 1), null);
                 elseExpr = result3.get(0).substring(1);
@@ -883,7 +932,7 @@ public class JsInterpreter {
 
             }
             StatementResult pending = new StatementResult(null, false);
-            Matcher m2 = STMT_TRY_CATCH_PATTERN.matcher(expr);
+            Matcher m2 = TRY_CATCH_PATTERN.matcher(expr);
             if (m2.find()) {
                 List<String> result3 = separateAtParen(expr.substring(m2.end() - 1), null);
                 String subExpr = result3.get(0).substring(1);
@@ -898,7 +947,7 @@ public class JsInterpreter {
                     pending = interpretStatement(subExpr, catchScope, allowRecursion);
                 }
             }
-            Matcher m4 = STMT_TRY_FINALLY_PATTERN.matcher(expr);
+            Matcher m4 = TRY_FINALLY_PATTERN.matcher(expr);
             if (m4.find()) {
                 List<String> result4 = separateAtParen(expr.substring(m4.end() - 1), null);
                 String subExpr = result4.get(0).substring(1);
@@ -928,7 +977,7 @@ public class JsInterpreter {
                 body = result2.get(0).substring(1);
                 expr = result2.get(1);
             } else {
-                Matcher switch_m = STMT_FOR_SWITCH_PATTERN.matcher(remaining);
+                Matcher switch_m = FOR_SWITCH_PATTERN.matcher(remaining);
                 if (switch_m.find()) {
                     List<String> result3 = separateAtParen(remaining.substring(switch_m.end() - 1), null);
                     String switch_val = result3.get(0).substring(1);
@@ -1026,7 +1075,7 @@ public class JsInterpreter {
             }
             return new StatementResult(ret, false);
         }
-        Matcher m3 = STMT_INCREMENT_DECREMENT_PATTERN.matcher(expr);
+        Matcher m3 = INCREMENT_DECREMENT_PATTERN.matcher(expr);
         while (m3.find()) {
             String var = m3.group("var1") != null ? m3.group("var1") : m3.group("var2");
             int start = m3.start();
@@ -1047,7 +1096,7 @@ public class JsInterpreter {
             return new StatementResult(null, shouldReturn);
         }
 
-        Matcher m2 = STMT_COMPLEX_PATTERN.matcher(expr);
+        Matcher m2 = JUMP_STATEMENT_PATTERN.matcher(expr);
         boolean find = m2.find(0);
 
         if (find && m2.group("assign") != null) {
@@ -1599,9 +1648,19 @@ public class JsInterpreter {
     }
 
     private Map<String, String> extractFunctionCode(String funName) throws Exception {
-        String quotedFunName = Pattern.quote(funName);
-        Pattern pattern = Pattern.compile(String.format(EXTRACT_FUNCTION_CODE_PATTERN.pattern(), quotedFunName, quotedFunName, quotedFunName));
-        Matcher matcher = pattern.matcher(code);
+        funName = Pattern.quote(funName);
+        Pattern EXTRACT_FUNCTION_CODE_PATTERN = Pattern.compile(
+                "(?x)"
+                        + "(?s)"
+                        + "(?:"
+                        + "function\\s+(" + funName + ")|"
+                        + "[{;,]\\s*(" + funName + ")\\s*=\\s*function|"
+                        + "(?:var|const|let)\\s+(" + funName + ")\\s*=\\s*function"
+                        + ")\\s*"
+                        + "\\((?<args>[^)]*)\\)\\s*"
+                        + "(?<code>\\{.+\\})"
+        );
+        Matcher matcher = EXTRACT_FUNCTION_CODE_PATTERN.matcher(code);
         String args;
         String code;
         Map<String, String> r = new HashMap<>();
@@ -1633,7 +1692,7 @@ public class JsInterpreter {
         if (globalVar != null) {
             code = globalVar + "; " + code;
         }
-        String regex = String.format(FIXUP_N_FUNCTION_CODE_PATTERN.pattern(), Pattern.quote(argnames[0]));
+        String regex = ";\\s*if\\s*\\(\\s*typeof\\s+[a-zA-Z0-9_$]+\\s*===?\\s*(['\"])undefined\\1\\s*\\)\\s*return\\s+" + Pattern.quote(argnames[0]) + ";";
         Pattern pattern = Pattern.compile(regex);
         Matcher matcher = pattern.matcher(code);
 
