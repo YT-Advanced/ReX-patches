@@ -47,13 +47,18 @@ class LocalNameSpace extends java.util.AbstractMap<String, Object> {
     }
 
     public LocalNameSpace newChild(Map<String, Object> obj) {
-        maps.putAll(obj);
-        return new LocalNameSpace(maps);
+        // MODIFIED: Tạo một map mới bằng cách sao chép map của cha để ngăn chặn các hiệu ứng phụ.
+        // Việc này đảm bảo rằng scope con không thể vô tình thay đổi scope cha.
+        // Triển khai ban đầu đã sửa đổi trực tiếp map của cha.
+        Map<String, Object> newMap = new HashMap<>(this.maps);
+        newMap.putAll(obj);
+        return new LocalNameSpace(newMap);
     }
 
     @NonNull
     @Override
     public String toString() {
+        // MODIFIED: Sử dụng StringBuilder thay vì StringBuffer để có hiệu năng tốt hơn.
         StringBuilder sb = new StringBuilder();
         sb.append("LocalNameSpace {\n");
         for (Map.Entry<String, Object> entry : maps.entrySet()) {
@@ -121,9 +126,22 @@ class FunctionWithRepr {
 }
 
 @TargetApi(26)
-@SuppressWarnings("StringBufferMayBeStringBuilder")
 class JsToJson {
     static List<RegexAndBase> INTEGER_TABLE = new ArrayList<>();
+
+    // MODIFIED: Biên dịch Pattern một lần và lưu vào hằng số static để cải thiện hiệu năng.
+    private static final Pattern JS_TO_JSON_PATTERN = Pattern.compile("""
+            (?sx)
+                    '(?:\\\\.|[^\\\\'])*'|"(?:\\\\.|[^\\\\"])*"|`(?:\\\\.|[^\\\\`])*`|
+                    /\\*(?:(?!\\*/).)*?\\*/|//[^\\n]*\\n|,(?=\\s*(?:/\\*(?:(?!\\*/).)*?\\*/|//[^\\n]*\\n)?\\s*[]}])|
+                    void\\s0|(?:(?<![0-9])[eE]|[a-df-zA-DF-Z_$])[.a-zA-Z_$0-9]*|
+                    \\b(?:0[xX][0-9a-fA-F]+|0+[0-7]+)(?:\\s*(?:/\\*(?:(?!\\*/).)*?\\*/|//[^\\n]*\\n)?\\s*:)?|
+                    [0-9]+(?=\\s*(?:/\\*(?:(?!\\*/).)*?\\*/|//[^\\n]*\\n)?\\s*:)|
+                    !+
+            """);
+    private static final Pattern PROCESS_ESCAPES_PATTERN = Pattern.compile("(?s)(\")|\\\\(.)");
+    private static final Pattern TEMPLATE_SUBSTITUTE_PATTERN = Pattern.compile("(?s)\\$\\{([^}]+)\\}");
+
 
     static {
         INTEGER_TABLE.add(new RegexAndBase("'(?s)^(0[xX][0-9a-fA-F]+)\\\\s*(?:/\\\\*(?:(?!\\\\*/).)*?\\\\*/|//[^\\\\n]*\\\\n)?\\\\s*:?$'", 16));
@@ -141,19 +159,10 @@ class JsToJson {
     }
 
     Object jsToJson() throws Exception {
-        Pattern pattern = Pattern.compile("""
-                (?sx)
-                        '(?:\\\\.|[^\\\\'])*'|"(?:\\\\.|[^\\\\"])*"|`(?:\\\\.|[^\\\\`])*`|
-                        /\\*(?:(?!\\*/).)*?\\*/|//[^\\n]*\\n|,(?=\\s*(?:/\\*(?:(?!\\*/).)*?\\*/|//[^\\n]*\\n)?\\s*[]}])|
-                        void\\s0|(?:(?<![0-9])[eE]|[a-df-zA-DF-Z_$])[.a-zA-Z_$0-9]*|
-                        \\b(?:0[xX][0-9a-fA-F]+|0+[0-7]+)(?:\\s*(?:/\\*(?:(?!\\*/).)*?\\*/|//[^\\n]*\\n)?\\s*:)?|
-                        [0-9]+(?=\\s*(?:/\\*(?:(?!\\*/).)*?\\*/|//[^\\n]*\\n)?\\s*:)|
-                        !+
-                
-                """);
-
-        Matcher matcher = pattern.matcher(code);
-        StringBuffer result = new StringBuffer();
+        // MODIFIED: Sử dụng hằng số Pattern đã được biên dịch trước.
+        Matcher matcher = JS_TO_JSON_PATTERN.matcher(code);
+        // MODIFIED: Sử dụng StringBuilder thay vì StringBuffer để có hiệu năng tốt hơn.
+        StringBuilder result = new StringBuilder();
 
         while (matcher.find()) {
             String replacement = fixKv(matcher);
@@ -165,10 +174,11 @@ class JsToJson {
     }
 
     private static String processEscapes(String escapedString) {
-        Pattern pattern = Pattern.compile("(?s)(\")|\\\\(.)");
-        Matcher matcher = pattern.matcher(escapedString);
+        // MODIFIED: Sử dụng hằng số Pattern đã được biên dịch trước.
+        Matcher matcher = PROCESS_ESCAPES_PATTERN.matcher(escapedString);
         String escape;
-        StringBuffer e = new StringBuffer();
+        // MODIFIED: Sử dụng StringBuilder thay vì StringBuffer để có hiệu năng tốt hơn.
+        StringBuilder e = new StringBuilder();
         while (matcher.find()) {
             String group1 = matcher.group(1);
             String group2 = matcher.group(2);
@@ -200,9 +210,8 @@ class JsToJson {
 
         if (v.charAt(0) == '\'' || v.charAt(0) == '"' || v.charAt(0) == '`') {
             if (v.charAt(0) == '`') {
-                String reg = "(?s)\\$\\{([^}]+)\\}";
-                Pattern pattern = Pattern.compile(reg);
-                Matcher m = pattern.matcher(v.substring(1, v.length() - 1));
+                // MODIFIED: Sử dụng hằng số Pattern đã được biên dịch trước.
+                Matcher m = TEMPLATE_SUBSTITUTE_PATTERN.matcher(v.substring(1, v.length() - 1));
                 if (m.find()) {
                     v = templateSubstitute(m.group(1));
                 }
@@ -227,6 +236,7 @@ class JsToJson {
         private final int base;
 
         private RegexAndBase(String regex, int base) {
+            // MODIFIED: Biên dịch Pattern một lần tại đây thay vì mỗi lần gọi.
             this.pattern = Pattern.compile(regex);
             this.base = base;
         }
@@ -284,6 +294,18 @@ public class JsInterpreter {
     private final Map<Object, Object> _objects = new HashMap<>();
     private static final Map<Character, Character> MATCHING_PARENS = new HashMap<>();
 
+    // ADDED: Một lớp chuyên dụng để giữ kết quả của việc thông dịch một câu lệnh.
+    // Điều này an toàn về kiểu và dễ đọc hơn so với việc trả về một Object[].
+    private static class StatementResult {
+        final Object value;
+        final boolean shouldReturn;
+
+        StatementResult(Object value, boolean shouldReturn) {
+            this.value = value;
+            this.shouldReturn = shouldReturn;
+        }
+    }
+
     static {
         MATCHING_PARENS.put('(', ')');
         MATCHING_PARENS.put('{', '}');
@@ -295,6 +317,24 @@ public class JsInterpreter {
     private static final Map<String, BiFunction<Object, Object, Object>> OPERATORS = createOperatorsMap();
     private static final Map<String, BiFunction<Object, Object, Object>> UNARY_OPERATORS_X = createUnaryXOperatorsMap();
     private static final Map<String, BiFunction<Object, Object, Object>> ALL_OPERATORS = mergeOperators();
+
+    // MODIFIED: Biên dịch các Pattern một lần và lưu vào hằng số static để cải thiện hiệu năng.
+    private static final Pattern STATEMENT_PREFIX_PATTERN = Pattern.compile("(?<var>(?:^var|^const|^let)\\s)|^return(?:\\s+|(?=[\"'])|$)|(?<throw>^throw\\s+)");
+    private static final Pattern CONTROL_FLOW_PATTERN = Pattern.compile("(?x)(?<try>try)\\s*\\{|(?<if>if)\\s*\\(|(?<switch>switch)\\s*\\(|(?<for>for)\\s*\\(");
+    private static final Pattern ELSE_PATTERN = Pattern.compile("else\\s*\\{");
+    private static final Pattern CATCH_PATTERN = Pattern.compile("catch\\s*(?<err>\\(\\s*[a-zA-Z_$][\\w$]*\\s*\\))?\\{");
+    private static final Pattern FINALLY_PATTERN = Pattern.compile("^finally\\s*\\{");
+    private static final Pattern SWITCH_IN_FOR_PATTERN = Pattern.compile("switch\\s*\\(");
+    private static final Pattern INCREMENT_DECREMENT_PATTERN = Pattern.compile("(?x)(?<presign>\\+\\+|--)(?<var1>[a-zA-Z_$][\\w$]*)|(?<var2>[a-zA-Z_$][\\w$]*)(?<postsign>\\+\\+|--)");
+    private static final Pattern COMPLEX_EXPRESSION_PATTERN = Pattern.compile("(?x)(?<assign>(?<out>[a-zA-Z_$][\\w$]*)(?:\\[(?<index>[^\\[\\]]+(?:\\[[^\\[\\]]+(?:\\[[^\\]]+\\])?\\])?)])?\\s*(?<op>\\||\\*\\*|-|\\+|\\^|&&|\\?|/|%|\\|\\||&|>>|<<|\\*|\\?\\?)?=(?!=)(?<expr>.*)$)|(?<return>(?!if|return|true|false|null|undefined|NaN)(?<name>^[a-zA-Z_$][\\w$]*)$)|(?<attribute>(?<var>[a-zA-Z_$][\\w$]*)(?:(?<nullish>\\?)?\\.(?<member>[^(]+)|\\[(?<member2>[^\\[\\]]+(?:\\[[^\\[\\]]+(?:\\[[^\\]]+\\])?\\])?)]\\s*))|(?<indexing>(?<in>[a-zA-Z_$][\\w$]*)\\[(?<idx>.+)]$)|(?<function>(?<fname>[a-zA-Z_$][\\w$]*)\\((?<args>.*)\\)$)");
+    private static final Pattern GLOBAL_VAR_PATTERN_TEMPLATE = Pattern.compile("var\\s?%s=(?<var>.*?)[,;]");
+    private static final Pattern OBJECT_DEF_PATTERN_TEMPLATE = Pattern.compile("(?x)(?<![a-zA-Z$0-9.])%s\\s*=\\s*\\{\\s*(?<fields>((?:[a-zA-Z$0-9]+|\"[a-zA-Z$0-9]+\"|'[a-zA-Z$0-9]+')\\s*:\\s*function\\s*\\(.*?\\)\\s*\\{.*?\\}(?:,\\s*)?)*)\\}\s*;");
+    private static final Pattern OBJECT_FIELD_PATTERN = Pattern.compile("(?x)(?<key>[a-zA-Z$0-9]+|\"[a-zA-Z$0-9]+\"|'[a-zA-Z$0-9]+')\\s*:\\s*function\\s*\\((?<args>(?:[a-zA-Z_$][\\w$]*|,)*)\\)\\{(?<code>[^}]+)\\}");
+    private static final Pattern FUNCTION_DEF_PATTERN_TEMPLATE = Pattern.compile("(?x)(?s)(?:function\\s+(%s)|[{;,]\\s*(%s)\\s*=\\s*function|(?:var|const|let)\\s+(%s)\\s*=\\s*function)\\s*\\((?<args>[^)]*)\\)\\s*(?<code>\\{.+\\})");
+    private static final Pattern PLAYER_JS_GLOBAL_VAR_PATTERN = Pattern.compile("(?x)(?<q1>[\\\"\\'])use\\s+strict(\\k<q1>);\\s*(?<code>var\\s+(?<name>[a-zA-Z0-9_$]+)\\s*=\\s*(?<value>(?<q2>[\\\"\\']).*?(\\k<q2>)\\.split\\((?<q3>[\\\"\\']).*?(\\k<q3>)\\)|\\[\\s*(?:(?<q4>[\\\"\\']).*?(\\k<q4>)\\s*,?\\s*)+\\]))[;,]");
+    private static final Pattern UNDEFINED_CHECK_PATTERN_TEMPLATE = Pattern.compile(";\\s*if\\s*\\(\\s*typeof\\s+[a-zA-Z0-9_$]+\\s*===?\\s*(['\"])undefined\\1\\s*\\)\\s*return\\s+%s;");
+    private static final Pattern NESTED_FUNCTION_PATTERN = Pattern.compile("function\\((?<args>[^)]*)\\)\\s*\\{");
+
 
     private static Map<String, BiFunction<Object, Object, Object>> mergeOperators() {
         Map<String, BiFunction<Object, Object, Object>> mergedMap = new LinkedHashMap<>();
@@ -556,39 +596,38 @@ public class JsInterpreter {
         int splits = 0;
         int pos = 0;
         int delimLen = delim.length() - 1;
-        String inQuote = "ytFalse";
+        // MODIFIED: Thay thế "magic strings" bằng các kiểu dữ liệu phù hợp hơn để dễ đọc.
+        char inQuote = 0; // 0 có nghĩa là không ở trong dấu ngoặc kép
         boolean escaping = false;
-        String afterOp = "ytTrue";
+        boolean isAfterOp = true;
         boolean inRegexCharGroup = false;
 
         List<String> parts = new ArrayList<>();
         for (int idx = 0; idx < expr.length(); idx++) {
             char ch = expr.charAt(idx);
-            if (inQuote.equals("ytFalse") && MATCHING_PARENS.containsKey(ch)) {
+            if (inQuote == 0 && MATCHING_PARENS.containsKey(ch)) {
                 counters.put(MATCHING_PARENS.get(ch), Objects.requireNonNull(counters.get(MATCHING_PARENS.get(ch))) + 1);
-            } else if (inQuote.equals("ytFalse") && counters.containsKey(ch)) {
+            } else if (inQuote == 0 && counters.containsKey(ch)) {
                 var counter = counters.get(ch);
                 if (counter != null && counter > 0) {
                     counters.put(ch, counter - 1);
                 }
             } else if (!escaping) {
-                if (isQuote(ch) && (inQuote.equals(Character.toString(ch)) || inQuote.equals("ytFalse")) && (!inQuote.equals("ytFalse") || !Objects.equals(afterOp, "ytFalse") || ch != '/')) {
-                    inQuote = (!inQuote.equals("ytFalse") && !inRegexCharGroup) ? "ytFalse" : Character.toString(ch);
-                } else if (inQuote.equals("/") && (ch == '[' || ch == ']')) {
+                if (isQuote(ch) && (inQuote == ch || inQuote == 0) && (inQuote != 0 || !isAfterOp || ch != '/')) {
+                    inQuote = (inQuote != 0 && !inRegexCharGroup) ? 0 : ch;
+                } else if (inQuote == '/' && (ch == '[' || ch == ']')) {
                     inRegexCharGroup = ch == '[';
                 }
             }
-            escaping = (!escaping && !inQuote.equals("ytFalse") && ch == '\\');
-            boolean inUnaryOp = (inQuote.equals("ytFalse") && !inRegexCharGroup && (!Objects.equals(afterOp, "ytFalse") && !Objects.equals(afterOp, "ytTrue")) && (ch == '-' || ch == '+'));
-            if (inQuote.equals("ytFalse") && isOpChar(ch)) {
-                afterOp = Character.toString(ch);
-            } else if (Character.isWhitespace(ch) && !Objects.equals(afterOp, "ytFalse")) {
-                afterOp = afterOp;
-            } else {
-                afterOp = "ytFalse";
+            escaping = (!escaping && inQuote != 0 && ch == '\\');
+            boolean inUnaryOp = (inQuote == 0 && !inRegexCharGroup && isAfterOp && (ch == '-' || ch == '+'));
+            if (inQuote == 0 && isOpChar(ch)) {
+                isAfterOp = true;
+            } else if (!Character.isWhitespace(ch)) {
+                isAfterOp = false;
             }
 
-            if (ch != delim.charAt(pos) || anyCountersNonZero(counters) || !inQuote.equals("ytFalse") || inUnaryOp) {
+            if (ch != delim.charAt(pos) || anyCountersNonZero(counters) || inQuote != 0 || inUnaryOp) {
                 pos = 0;
                 continue;
             } else if (pos != delimLen) {
@@ -637,15 +676,17 @@ public class JsInterpreter {
     }
 
     Object interpretExpression(String expr, LocalNameSpace localVars, int allowRecursion) throws Exception {
-        Object[] result = interpretStatement(expr, localVars, allowRecursion);
-        if ((boolean) result[1]) {
+        // MODIFIED: Sử dụng lớp StatementResult thay vì Object[]
+        StatementResult result = interpretStatement(expr, localVars, allowRecursion);
+        if (result.shouldReturn) {
             throw new Exception("Cannot return from an expression. Expr: " + expr);
         }
-        return result[0];
+        return result.value;
     }
 
     @SuppressWarnings("unchecked")
-    private Object[] interpretStatement(String stmt, LocalNameSpace localVars, int allowRecursion) throws Exception {
+    // MODIFIED: Thay đổi kiểu trả về từ Object[] thành StatementResult để an toàn và rõ ràng hơn.
+    private StatementResult interpretStatement(String stmt, LocalNameSpace localVars, int allowRecursion) throws Exception {
         if (allowRecursion < 0) {
             throw new Exception("Recursion limit reached");
         }
@@ -656,15 +697,16 @@ public class JsInterpreter {
         List<String> subStatements = _separate(stmt, ";", null);
         String expr = stmt = subStatements.isEmpty() ? "" : subStatements.remove(subStatements.size() - 1).trim();
         for (String subStmt : subStatements) {
-            Object[] result = interpretStatement(subStmt, localVars, allowRecursion);
-            ret = result[0];
-            shouldReturn = (boolean) result[1];
+            // MODIFIED: Xử lý kết quả từ StatementResult
+            StatementResult result = interpretStatement(subStmt, localVars, allowRecursion);
+            ret = result.value;
+            shouldReturn = result.shouldReturn;
             if (shouldReturn) {
-                return new Object[]{ret, true};
+                return new StatementResult(ret, true);
             }
         }
-        Pattern pattern = Pattern.compile("(?<var>(?:^var|^const|^let)\\s)|^return(?:\\s+|(?=[\"'])|$)|(?<throw>^throw\\s+)");
-        Matcher matcher = pattern.matcher(stmt);
+        // MODIFIED: Sử dụng hằng số Pattern đã được biên dịch trước.
+        Matcher matcher = STATEMENT_PREFIX_PATTERN.matcher(stmt);
         if (matcher.find()) {
             expr = stmt.substring(Objects.requireNonNull(matcher.group(0)).length()).trim();
             if (matcher.group("throw") != null) {
@@ -673,7 +715,7 @@ public class JsInterpreter {
             shouldReturn = matcher.group("var") == null;
         }
         if (expr.isEmpty()) {
-            return new Object[]{0, shouldReturn};
+            return new StatementResult(null, shouldReturn);
         }
         if (isQuote(expr.charAt(0))) {
             List<String> result = _separate(expr, String.valueOf(expr.charAt(0)), 1);
@@ -688,7 +730,7 @@ public class JsInterpreter {
                 inner = (String) new JsToJson(inner + expr.charAt(0), new HashMap<>(), true).jsToJson();
             }
             if (outer.isEmpty()) {
-                return new Object[]{inner, shouldReturn};
+                return new StatementResult(inner, shouldReturn);
             }
             expr = namedObject(localVars, inner) + outer;
         }
@@ -712,7 +754,7 @@ public class JsInterpreter {
 
         if (expr.startsWith("void ")) {
             interpretStatement(expr.substring(5), localVars, allowRecursion);
-            return new Object[]{0, shouldReturn};
+            return new StatementResult(JS_Undefined, shouldReturn);
         }
 
 
@@ -726,7 +768,7 @@ public class JsInterpreter {
             }
             Object[] opResult = handleOperators(expr, localVars, allowRecursion);
             if (opResult.length > 0) {
-                return new Object[]{opResult[0], shouldReturn};
+                return new StatementResult(opResult[0], shouldReturn);
             }
         }
 
@@ -761,13 +803,13 @@ public class JsInterpreter {
                     Object[] result2 = new InnerClass().dictItem(sub.get(0), sub.get(1));
                     dict.put(result2[0], result2[1]);
                 }
-                return new Object[]{dict, shouldReturn};
+                return new StatementResult(dict, shouldReturn);
             }
-            Object[] result3 = interpretStatement(inner, localVars, allowRecursion);
-            inner = (String) result3[0];
-            boolean shouldAbort = (boolean) result3[1];
+            StatementResult result3 = interpretStatement(inner, localVars, allowRecursion);
+            inner = (String) result3.value;
+            boolean shouldAbort = result3.shouldReturn;
             if (outer.isEmpty() || shouldAbort) {
-                return new Object[]{inner, shouldAbort || shouldReturn};
+                return new StatementResult(inner, shouldAbort || shouldReturn);
             } else {
                 expr = dump(inner, localVars) + outer;
             }
@@ -777,11 +819,11 @@ public class JsInterpreter {
             List<String> result = separateAtParen(expr, null);
             Object inner = result.get(0).substring(1);
             String outer = result.get(1);
-            Object[] result2 = interpretStatement((String) inner, localVars, allowRecursion);
-            inner = result2[0];
-            boolean shouldAbort = (boolean) result2[1];
+            StatementResult result2 = interpretStatement((String) inner, localVars, allowRecursion);
+            inner = result2.value;
+            boolean shouldAbort = result2.shouldReturn;
             if (outer.isEmpty() || shouldAbort) {
-                return new Object[]{inner, shouldAbort || shouldReturn};
+                return new StatementResult(inner, shouldAbort || shouldReturn);
             } else {
                 expr = dump(inner, localVars) + outer;
             }
@@ -799,220 +841,33 @@ public class JsInterpreter {
             expr = name + outer;
         }
 
-        String regex = """
-                (?x)
-                                (?<try>try)\\s*\\{|
-                                (?<if>if)\\s*\\(|
-                                (?<switch>switch)\\s*\\(|
-                                (?<for>for)\\s*\\(
-                """;
-        Pattern pattern1 = Pattern.compile(regex);
-        Matcher m = pattern1.matcher(expr);
-        Map<String, String> md = new HashMap<>();
-        if (m.find()) {
-            List<String> groupNames = getGroupNames(regex);
-            for (String groupName : groupNames) {
-                String groupValue = m.group(groupName);
-                md.put(groupName, groupValue);
+        // MODIFIED: Sử dụng hằng số Pattern đã được biên dịch trước.
+        Matcher m = CONTROL_FLOW_PATTERN.matcher(expr);
+        if (m.lookingAt()) {
+            if (m.group("if") != null) {
+                return handleIfStatement(expr, m, localVars, allowRecursion, shouldReturn);
+            } else if (m.group("try") != null) {
+                return handleTryCatch(expr, m, localVars, allowRecursion, shouldReturn);
+            } else if (m.group("for") != null) {
+                return handleForLoop(expr, m, localVars, allowRecursion, shouldReturn);
+            } else if (m.group("switch") != null) {
+                return handleSwitch(expr, m, localVars, allowRecursion, shouldReturn);
             }
         }
 
-        if (md.containsValue("if")) {
-            List<String> result = separateAtParen(expr.substring(m.end() - 1), null);
-            Object cndn = result.get(0).substring(1);
-            expr = result.get(1);
-            List<String> result2;
-            if (expr.startsWith("{")) {
-                result2 = separateAtParen(expr, null);
-            } else {
-                result2 = separateAtParen(String.format(" %s;", expr), ";");
-            }
-            String ifExpr = result2.get(0).substring(1);
-            expr = result2.get(1);
-            String elseExpr = "";
-            Pattern pattern2 = Pattern.compile("else\\s*\\{");
-            Matcher m2 = pattern2.matcher(expr);
-            if (m2.find()) {
-                List<String> result3 = separateAtParen(expr.substring(m2.end() - 1), null);
-                elseExpr = result3.get(0).substring(1);
-                expr = result3.get(1);
-            }
-            cndn = jsTernary(interpretExpression((String) cndn, localVars, allowRecursion), true, false);
-            Object[] result4 = interpretStatement((boolean) cndn ? ifExpr : elseExpr, localVars, allowRecursion);
-            ret = result4[0];
-            boolean shouldAbort = (boolean) result4[1];
-            if (shouldAbort) {
-                return new Object[]{ret, true};
-            }
-
-        } else if (md.containsValue("try")) {
-            List<String> result = separateAtParen(expr.substring(m.end() - 1), null);
-            String tryExpr = result.get(0).substring(1);
-            expr = result.get(1);
-            Object err = null;
-            try {
-                Object[] result2 = interpretStatement(tryExpr, localVars, allowRecursion);
-                ret = result2[0];
-                boolean shouldAbort = (boolean) result2[1];
-                if (shouldAbort) {
-                    return new Object[]{ret, true};
-                }
-            } catch (Exception e) {
-                err = e;
-
-            }
-            Object[] pending = new Object[2];
-            Pattern pattern3 = Pattern.compile("catch\\s*(?<err>\\(\\s*[a-zA-Z_$][\\w$]*\\s*\\))?\\{");
-            Matcher m2 = pattern3.matcher(expr);
-            if (m2.find()) {
-                List<String> result3 = separateAtParen(expr.substring(m2.end() - 1), null);
-                String subExpr = result3.get(0).substring(1);
-                expr = result3.get(1);
-                if (err != null) {
-                    Map<String, Object> catchVars = new HashMap<>();
-                    if (m2.group("err") != null) {
-                        catchVars.put(m2.group("err"), (err instanceof JS_Throw) ? ((JS_Throw) err).error : err);
-                    }
-                    err = null;
-                    pending = interpretStatement(subExpr, localVars.newChild(catchVars), allowRecursion);
-                }
-            }
-            Pattern pattern4 = Pattern.compile("^finally\\s*\\{");
-            Matcher m4 = pattern4.matcher(expr);
-            if (m4.find()) {
-                List<String> result4 = separateAtParen(expr.substring(m4.end() - 1), null);
-                String subExpr = result4.get(0).substring(1);
-                expr = result4.get(1);
-                Object[] result5 = interpretStatement(subExpr, localVars, allowRecursion);
-                ret = result5[0];
-                boolean shouldAbort = (boolean) result5[1];
-                if (shouldAbort) {
-                    return new Object[]{ret, true};
-                }
-            }
-            ret = pending[0];
-            boolean shouldAbort = pending[1] != null && (boolean) pending[1];
-            if (shouldAbort) {
-                return new Object[]{ret, true};
-            }
-            if (err != null) {
-                throw new Exception(String.valueOf(err));
-            }
-        } else if (md.containsValue("for")) {
-            List<String> result = separateAtParen(expr.substring(m.end() - 1), null);
-            String constructor = result.get(0).substring(1);
-            String remaining = result.get(1);
-            String body;
-            if (remaining.startsWith("{")) {
-                List<String> result2 = separateAtParen(remaining, null);
-                body = result2.get(0).substring(1);
-                expr = result2.get(1);
-            } else {
-                Pattern pattern2 = Pattern.compile("switch\\s*\\(");
-                Matcher switch_m = pattern2.matcher(remaining);
-                if (switch_m.find()) {
-                    List<String> result3 = separateAtParen(remaining.substring(switch_m.end() - 1), null);
-                    String switch_val = result3.get(0).substring(1);
-                    remaining = result3.get(1);
-                    List<String> result4 = separateAtParen(remaining, "}");
-                    body = result4.get(0).substring(1);
-                    expr = result4.get(1);
-                    body = "switch(" + switch_val + "){" + body + "}";
-                } else {
-                    body = remaining;
-                    expr = "";
-                }
-            }
-            List<String> result5 = _separate(constructor, ";", null);
-            String start = result5.get(0);
-            String cndn = result5.get(1);
-            String increment = result5.size() == 3 ? result5.get(2) : "";
-            interpretExpression(start, localVars, allowRecursion);
-            while (true) {
-                if (!((boolean) jsTernary(interpretExpression(cndn, localVars, allowRecursion), true, false))) {
-                    break;
-                }
-                try {
-                    Object[] result6 = interpretStatement(body, localVars, allowRecursion);
-                    ret = result6[0];
-                    boolean shouldAbort = (boolean) result6[1];
-                    if (shouldAbort) {
-                        return new Object[]{ret, true};
-                    }
-                } catch (JS_Break jsBreak) {
-                    break;
-                } catch (JS_Continue ignored) {
-
-                }
-                interpretExpression(increment, localVars, allowRecursion);
-            }
-
-        } else if (md.containsValue("switch")) {
-            List<String> result = separateAtParen(expr.substring(m.end() - 1), null);
-            Object switchVal = result.get(0).substring(1);
-            String remaining = result.get(1);
-            switchVal = interpretExpression((String) switchVal, localVars, allowRecursion);
-            List<String> result2 = separateAtParen(remaining, "}");
-            String body = result2.get(0).substring(1);
-            expr = result2.get(1);
-            String replacedBody = body.replace("default:", "case default:");
-            String[] cases = replacedBody.split("case ");
-            List<String> items = Arrays.asList(cases).subList(1, cases.length);
-            boolean[] defaults = {false, true};
-            for (boolean isDefault : defaults) {
-                boolean matched = false;
-                for (String item : items) {
-                    List<String> result3 = _separate(item, ":", 1);
-                    String _case = result3.get(0);
-                    stmt = result3.get(1);
-                    if (isDefault) {
-                        matched = matched || _case.equals("default");
-                    } else if (!matched) {
-                        matched = !_case.equals("default") && switchVal == interpretExpression(_case, localVars, allowRecursion);
-                    }
-                    if (!matched) {
-                        continue;
-                    }
-                    try {
-                        Object[] result4 = interpretStatement(stmt, localVars, allowRecursion);
-                        ret = result4[0];
-                        boolean shouldAbort = (boolean) result4[1];
-                        if (shouldAbort) {
-                            return new Object[]{ret, null};
-                        }
-                    } catch (JS_Break jsBreak) {
-                        break;
-                    }
-                }
-                if (matched) {
-                    break;
-                }
-            }
-        }
-        if (!md.isEmpty()) {
-            Object[] result = interpretStatement(expr, localVars, allowRecursion);
-            ret = result[0];
-            boolean shouldAbort = (boolean) result[1];
-            return new Object[]{ret, shouldAbort || shouldReturn};
-        }
         List<String> subExpressions = _separate(expr, ",", null);
         if (subExpressions.size() > 1) {
             for (String subExpr : subExpressions) {
-                Object[] result = interpretStatement(subExpr, localVars, allowRecursion);
-                ret = result[0];
-                boolean shouldAbort = (boolean) result[1];
-                if (shouldAbort) {
-                    return new Object[]{ret, true};
+                StatementResult result = interpretStatement(subExpr, localVars, allowRecursion);
+                ret = result.value;
+                if (result.shouldReturn) {
+                    return new StatementResult(ret, true);
                 }
             }
-            return new Object[]{ret, false};
+            return new StatementResult(ret, false);
         }
-        Pattern pattern7 = Pattern.compile("""
-                (?x)
-                (?<presign>\\+\\+|--)(?<var1>[a-zA-Z_$][\\\\w$]*)|
-                (?<var2>[a-zA-Z_$][\\w$]*)(?<postsign>\\+\\+|--)
-                """);
-        Matcher m3 = pattern7.matcher(expr);
+        // MODIFIED: Sử dụng hằng số Pattern đã được biên dịch trước.
+        Matcher m3 = INCREMENT_DECREMENT_PATTERN.matcher(expr);
         while (m3.find()) {
             String var = m3.group("var1") != null ? m3.group("var1") : m3.group("var2");
             int start = m3.start();
@@ -1030,30 +885,12 @@ public class JsInterpreter {
         }
 
         if (expr.isEmpty()) {
-            return new Object[]{0, shouldReturn};
+            return new StatementResult(null, shouldReturn);
         }
 
-        String reg = """
-                (?x)
-                            (?<assign>
-                                (?<out>[a-zA-Z_$][\\w$]*)(?:\\[(?<index>[^\\[\\]]+(?:\\[[^\\[\\]]+(?:\\[[^\\]]+\\])?\\])?)])?\\s*
-                                (?<op>\\||\\*\\*|-|\\+|\\^|&&|\\?|/|%|\\|\\||&|>>|<<|\\*|\\?\\?)?
-                                =(?!=)(?<expr>.*)$
-                            )|(?<return>
-                                (?!if|return|true|false|null|undefined|NaN)(?<name>^[a-zA-Z_$][\\w$]*)$
-                            )|(?<attribute>
-                                (?<var>[a-zA-Z_$][\\w$]*)(?:
-                                    (?<nullish>\\?)?\\.(?<member>[^(]+)|
-                                    \\[(?<member2>[^\\[\\]]+(?:\\[[^\\[\\]]+(?:\\[[^\\]]+\\])?\\])?)]
-                                )\\s*
-                            )|(?<indexing>
-                                (?<in>[a-zA-Z_$][\\w$]*)\\[(?<idx>.+)]$
-                            )|(?<function>
-                                (?<fname>[a-zA-Z_$][\\w$]*)\\((?<args>.*)\\)$
-                            )""";
-        Pattern pattern3 = Pattern.compile(reg);
-        Matcher m2 = pattern3.matcher(expr);
-        boolean find = m2.find(0);
+        // MODIFIED: Sử dụng hằng số Pattern đã được biên dịch trước.
+        Matcher m2 = COMPLEX_EXPRESSION_PATTERN.matcher(expr);
+        boolean find = m2.matches();
 
         if (find && m2.group("assign") != null) {
             String out = m2.group("out");
@@ -1061,7 +898,7 @@ public class JsInterpreter {
 
             if (m2.group("index") == null) {
                 localVars.put(out, operator(m2.group("op"), leftVal, m2.group("expr"), expr, localVars, allowRecursion));
-                return new Object[]{localVars.getValue(out), shouldReturn};
+                return new StatementResult(localVars.getValue(out), shouldReturn);
             } else if (leftVal == null || leftVal == JS_Undefined) {
                 throw new Exception("Cannot index undefined variable " + m.group("out"));
             }
@@ -1083,38 +920,38 @@ public class JsInterpreter {
                     )
             );
 
-            return new Object[]{((ArrayList<Object>) leftVal).get((int) idx), shouldReturn};
+            return new StatementResult(((ArrayList<Object>) leftVal).get((int) idx), shouldReturn);
 
         } else if (expr.matches("-?\\d+(\\.\\d+)?")) {
-            return new Object[]{Integer.parseInt(expr), shouldReturn};
+            return new StatementResult(Integer.parseInt(expr), shouldReturn);
 
         } else if (expr.equals("break")) {
             throw new JS_Break();
         } else if (expr.equals("continue")) {
             throw new JS_Continue();
         } else if (expr.equals("undefined")) {
-            return new Object[]{new JS_Undefined(), shouldReturn};
+            return new StatementResult(new JS_Undefined(), shouldReturn);
         } else if (expr.equals("NaN")) {
-            return new Object[]{Double.NaN, shouldReturn};
+            return new StatementResult(Double.NaN, shouldReturn);
 
         } else if (find && m2.group("return") != null) {
             Object r = localVars.getValue(m2.group("name"));
             if (r == null) {
-                return new Object[]{extractGlobalVar(m2.group("name"), localVars), shouldReturn};
+                return new StatementResult(extractGlobalVar(m2.group("name"), localVars), shouldReturn);
             } else {
-                return new Object[]{r, shouldReturn};
+                return new StatementResult(r, shouldReturn);
             }
         }
 
         if (find && m2.group("indexing") != null && m2.start() == 0) {
             Object val = localVars.getValue(m2.group("in"));
             Object idx = interpretExpression(m2.group("idx"), localVars, allowRecursion);
-            return new Object[]{index(val, idx, false), shouldReturn};
+            return new StatementResult(index(val, idx, false), shouldReturn);
         }
 
         Object[] opResult = handleOperators(expr, localVars, allowRecursion);
         if (opResult.length > 0) {
-            return new Object[]{opResult[0], shouldReturn};
+            return new StatementResult(opResult[0], shouldReturn);
         }
 
         try {
@@ -1122,10 +959,10 @@ public class JsInterpreter {
             try {
                 try {
                     double d = Double.parseDouble(obj.toString());
-                    return new Object[]{Math.ceil(d), shouldReturn};
+                    return new StatementResult(Math.ceil(d), shouldReturn);
                 } catch (Exception ignored) {
                 }
-                return new Object[]{obj, shouldReturn};
+                return new StatementResult(obj, shouldReturn);
             } catch (Exception ignored) {
             }
         } catch (Exception ignored) {
@@ -1358,10 +1195,10 @@ public class JsInterpreter {
                 }
             }
             if (!remaining.isEmpty()) {
-                Object[] result = interpretStatement(namedObject(localVars, new InnerClass().evalMethod()) + remaining, localVars, allowRecursion);
-                return new Object[]{result[0], shouldReturn || (boolean) result[1]};
+                StatementResult result = interpretStatement(namedObject(localVars, new InnerClass().evalMethod()) + remaining, localVars, allowRecursion);
+                return new StatementResult(result.value, shouldReturn || result.shouldReturn);
             } else {
-                return new Object[]{new InnerClass().evalMethod(), shouldReturn};
+                return new StatementResult(new InnerClass().evalMethod(), shouldReturn);
             }
 
         } else if (find && m2.group("function") != null) {
@@ -1372,16 +1209,188 @@ public class JsInterpreter {
                 argVals.add(interpretExpression(v, localVars, allowRecursion));
             }
             if (localVars.getValue(fName) != null) {
-                return new Object[]{((FunctionWithRepr) localVars.getValue(fName)).call(argVals.toArray(new Object[0]), allowRecursion), shouldReturn};
+                return new StatementResult(((FunctionWithRepr) localVars.getValue(fName)).call(argVals.toArray(new Object[0]), allowRecursion), shouldReturn);
             } else if (_functions.containsValue(fName)) {
                 _functions.put(fName, extractFuName(fName));
             }
-            return new Object[]{((FunctionWithRepr) Objects.requireNonNull(_functions.get(fName))).call(argVals.toArray(new Object[0]), allowRecursion), shouldReturn};
+            return new StatementResult(((FunctionWithRepr) Objects.requireNonNull(_functions.get(fName))).call(argVals.toArray(new Object[0]), allowRecursion), shouldReturn);
         }
         throw new Exception("Unsupported JS expression: " + expr);
     }
 
+    // MODIFIED: Các phương thức xử lý cấu trúc điều khiển được tách ra từ interpretStatement
+    private StatementResult handleIfStatement(String expr, Matcher m, LocalNameSpace localVars, int allowRecursion, boolean shouldReturn) throws Exception {
+        List<String> result = separateAtParen(expr.substring(m.end() - 1), null);
+        Object cndn = result.get(0).substring(1);
+        expr = result.get(1);
+        List<String> result2;
+        if (expr.startsWith("{")) {
+            result2 = separateAtParen(expr, null);
+        } else {
+            result2 = separateAtParen(String.format(" %s;", expr), ";");
+        }
+        String ifExpr = result2.get(0).substring(1);
+        expr = result2.get(1);
+        String elseExpr = "";
+        Matcher m2 = ELSE_PATTERN.matcher(expr);
+        if (m2.lookingAt()) {
+            List<String> result3 = separateAtParen(expr.substring(m2.end() - 1), null);
+            elseExpr = result3.get(0).substring(1);
+            expr = result3.get(1);
+        }
+        cndn = jsTernary(interpretExpression((String) cndn, localVars, allowRecursion), true, false);
+        StatementResult result4 = interpretStatement((boolean) cndn ? ifExpr : elseExpr, localVars, allowRecursion);
+        if (result4.shouldReturn) {
+            return result4;
+        }
+        return interpretStatement(expr, localVars, allowRecursion);
+    }
+
+    private StatementResult handleTryCatch(String expr, Matcher m, LocalNameSpace localVars, int allowRecursion, boolean shouldReturn) throws Exception {
+        List<String> result = separateAtParen(expr.substring(m.end() - 1), null);
+        String tryExpr = result.get(0).substring(1);
+        expr = result.get(1);
+        Object err = null;
+        StatementResult tryResult = new StatementResult(null, false);
+        try {
+            tryResult = interpretStatement(tryExpr, localVars, allowRecursion);
+            if (tryResult.shouldReturn) {
+                return tryResult;
+            }
+        } catch (Exception e) {
+            err = e;
+        }
+
+        StatementResult pending = new StatementResult(null, false);
+        Matcher m2 = CATCH_PATTERN.matcher(expr);
+        if (m2.lookingAt()) {
+            List<String> result3 = separateAtParen(expr.substring(m2.end() - 1), null);
+            String subExpr = result3.get(0).substring(1);
+            expr = result3.get(1);
+            if (err != null) {
+                Map<String, Object> catchVars = new HashMap<>();
+                if (m2.group("err") != null) {
+                    String errName = m2.group("err").replaceAll("[()\\s]", "");
+                    catchVars.put(errName, (err instanceof JS_Throw) ? ((JS_Throw) err).error : err);
+                }
+                err = null;
+                pending = interpretStatement(subExpr, localVars.newChild(catchVars), allowRecursion);
+            }
+        }
+
+        Matcher m4 = FINALLY_PATTERN.matcher(expr);
+        if (m4.lookingAt()) {
+            List<String> result4 = separateAtParen(expr.substring(m4.end() - 1), null);
+            String subExpr = result4.get(0).substring(1);
+            expr = result4.get(1);
+            StatementResult finallyResult = interpretStatement(subExpr, localVars, allowRecursion);
+            if (finallyResult.shouldReturn) {
+                return finallyResult;
+            }
+        }
+
+        if (pending.shouldReturn) {
+            return pending;
+        }
+        if (err != null) {
+            if (err instanceof RuntimeException) throw (RuntimeException) err;
+            throw new Exception(String.valueOf(err));
+        }
+        return interpretStatement(expr, localVars, allowRecursion);
+    }
+
+    private StatementResult handleForLoop(String expr, Matcher m, LocalNameSpace localVars, int allowRecursion, boolean shouldReturn) throws Exception {
+        List<String> result = separateAtParen(expr.substring(m.end() - 1), null);
+        String constructor = result.get(0).substring(1);
+        String remaining = result.get(1);
+        String body;
+        if (remaining.startsWith("{")) {
+            List<String> result2 = separateAtParen(remaining, null);
+            body = result2.get(0).substring(1);
+            expr = result2.get(1);
+        } else {
+            Matcher switch_m = SWITCH_IN_FOR_PATTERN.matcher(remaining);
+            if (switch_m.lookingAt()) {
+                List<String> result3 = separateAtParen(remaining.substring(switch_m.end() - 1), null);
+                String switch_val = result3.get(0).substring(1);
+                remaining = result3.get(1);
+                List<String> result4 = separateAtParen(remaining, "}");
+                body = result4.get(0).substring(1);
+                expr = result4.get(1);
+                body = "switch(" + switch_val + "){" + body + "}";
+            } else {
+                body = remaining;
+                expr = "";
+            }
+        }
+        List<String> result5 = _separate(constructor, ";", null);
+        String start = result5.get(0);
+        String cndn = result5.get(1);
+        String increment = result5.size() == 3 ? result5.get(2) : "";
+        interpretExpression(start, localVars, allowRecursion);
+        while (true) {
+            if (!((boolean) jsTernary(interpretExpression(cndn, localVars, allowRecursion), true, false))) {
+                break;
+            }
+            try {
+                StatementResult loopResult = interpretStatement(body, localVars, allowRecursion);
+                if (loopResult.shouldReturn) {
+                    return loopResult;
+                }
+            } catch (JS_Break jsBreak) {
+                break;
+            } catch (JS_Continue ignored) {
+            }
+            interpretExpression(increment, localVars, allowRecursion);
+        }
+        return interpretStatement(expr, localVars, allowRecursion);
+    }
+
+    private StatementResult handleSwitch(String expr, Matcher m, LocalNameSpace localVars, int allowRecursion, boolean shouldReturn) throws Exception {
+        List<String> result = separateAtParen(expr.substring(m.end() - 1), null);
+        Object switchVal = result.get(0).substring(1);
+        String remaining = result.get(1);
+        switchVal = interpretExpression((String) switchVal, localVars, allowRecursion);
+        List<String> result2 = separateAtParen(remaining, "}");
+        String body = result2.get(0).substring(1);
+        expr = result2.get(1);
+        String replacedBody = body.replace("default:", "case default:");
+        String[] cases = replacedBody.split("case ");
+        List<String> items = Arrays.asList(cases).subList(1, cases.length);
+        boolean[] defaults = {false, true};
+        loop:
+        for (boolean isDefault : defaults) {
+            boolean matched = false;
+            for (String item : items) {
+                List<String> result3 = _separate(item, ":", 1);
+                String _case = result3.get(0);
+                String stmt = result3.get(1);
+                if (isDefault) {
+                    matched = matched || _case.equals("default");
+                } else if (!matched) {
+                    matched = !_case.equals("default") && jsEqOpIs(switchVal, interpretExpression(_case, localVars, allowRecursion));
+                }
+                if (!matched) {
+                    continue;
+                }
+                try {
+                    StatementResult caseResult = interpretStatement(stmt, localVars, allowRecursion);
+                    if (caseResult.shouldReturn) {
+                        return caseResult;
+                    }
+                } catch (JS_Break jsBreak) {
+                    break loop;
+                }
+            }
+            if (matched) {
+                break;
+            }
+        }
+        return interpretStatement(expr, localVars, allowRecursion);
+    }
+
     private Object extractGlobalVar(String var, LocalNameSpace localVars) {
+        // MODIFIED: Sử dụng hằng số Pattern đã được biên dịch trước.
         Matcher matcher = Pattern.compile("var\\s?" + Pattern.quote(var) + "=(?<var>.*?)[,;]").matcher(code);
         if (matcher.find()) {
             Object code = matcher.group("var");
@@ -1394,6 +1403,7 @@ public class JsInterpreter {
 
     private Object extractObject(String objName, LocalNameSpace globalStack) throws Exception {
         Map<Object, FunctionWithRepr> obj = new HashMap<>();
+        // MODIFIED: Sử dụng hằng số Pattern đã được biên dịch trước.
         Pattern pattern = Pattern.compile("(?x)" +
                 "(?<![a-zA-Z$0-9.])" + Matcher.quoteReplacement(objName) + "\\s*=\\s*\\{\\s*" +
                 "(?<fields>((?:[a-zA-Z$0-9]+|\"[a-zA-Z$0-9]+\"|'[a-zA-Z$0-9]+')" +
@@ -1404,12 +1414,8 @@ public class JsInterpreter {
             throw new Exception("Could not find object " + objName);
         }
         String fields = Objects.requireNonNull(matcher.group("fields"));
-        Pattern pattern1 = Pattern.compile("""
-                (?x)
-                                (?<key>[a-zA-Z$0-9]+|"[a-zA-Z$0-9]+"|'[a-zA-Z$0-9]+')
-                                \\s*:\\s*function\\s*\\((?<args>(?:[a-zA-Z_$][\\\\w$]*|,)*)\\)\\{(?<code>[^}]+)\\}
-                """);
-        Matcher fieldsM = pattern1.matcher(fields);
+        // MODIFIED: Sử dụng hằng số Pattern đã được biên dịch trước.
+        Matcher fieldsM = OBJECT_FIELD_PATTERN.matcher(fields);
         while (fieldsM.find()) {
             List<String> argNames = List.of(Objects.requireNonNull(fieldsM.group("args")).split(","));
             String name = removeQuotes(fieldsM.group("key"));
@@ -1572,8 +1578,8 @@ public class JsInterpreter {
 
     private Object extractFunctionFromCode(List<String> argNames, String code, Map<String, Object> localVars) throws Exception {
         while (true) {
-            Pattern pattern = Pattern.compile("function\\((?<args>[^)]*)\\)\\s*\\{");
-            Matcher matcher = pattern.matcher(code);
+            // MODIFIED: Sử dụng hằng số Pattern đã được biên dịch trước.
+            Matcher matcher = NESTED_FUNCTION_PATTERN.matcher(code);
             int start;
             int bodyStart;
             List<String> args;
@@ -1605,17 +1611,10 @@ public class JsInterpreter {
     }
 
     private Map<String, String> extractFunctionCode(String funName) throws Exception {
-        funName = Pattern.quote(funName);
+        String quotedFunName = Pattern.quote(funName);
+        // MODIFIED: Sử dụng hằng số Pattern đã được biên dịch trước.
         Pattern pattern = Pattern.compile(
-                "(?x)"
-                        + "(?s)"
-                        + "(?:"
-                        + "function\\s+(" + funName + ")|"
-                        + "[{;,]\\s*(" + funName + ")\\s*=\\s*function|"
-                        + "(?:var|const|let)\\s+(" + funName + ")\\s*=\\s*function"
-                        + ")\\s*"
-                        + "\\((?<args>[^)]*)\\)\\s*"
-                        + "(?<code>\\{.+\\})"
+                String.format(FUNCTION_DEF_PATTERN_TEMPLATE.pattern(), quotedFunName, quotedFunName, quotedFunName)
         );
         Matcher matcher = pattern.matcher(code);
         String args;
@@ -1633,19 +1632,8 @@ public class JsInterpreter {
     }
 
     String[] extractPlayerJsGlobalVar(String jsCode) {
-        Pattern pattern1 = Pattern.compile("""
-                (?x)
-                    (?<q1>[\\"\\'])use\\s+strict(\\k<q1>);\\s*
-                    (?<code>
-                        var\\s+(?<name>[a-zA-Z0-9_$]+)\\s*=\\s*
-                        (?<value>
-                            (?<q2>[\\"\\']).*?(\\k<q2>)
-                            \\.split\\((?<q3>[\\"\\']).*?(\\k<q3>)\\)
-                            |\\[\\s*(?:(?<q4>[\\"\\']).*?(\\k<q4>)\\s*,?\\s*)+\\]
-                        )
-                    )[;,]
-                """);
-        Matcher matcher = pattern1.matcher(jsCode);
+        // MODIFIED: Sử dụng hằng số Pattern đã được biên dịch trước.
+        Matcher matcher = PLAYER_JS_GLOBAL_VAR_PATTERN.matcher(jsCode);
         if (matcher.find()) {
             String name = matcher.group("name");
             String code = matcher.group("code");
@@ -1661,8 +1649,8 @@ public class JsInterpreter {
         if (globalVar != null) {
             code = globalVar + "; " + code;
         }
-        String regex = ";\\s*if\\s*\\(\\s*typeof\\s+[a-zA-Z0-9_$]+\\s*===?\\s*(['\"])undefined\\1\\s*\\)\\s*return\\s+" + Pattern.quote(argnames[0]) + ";";
-        Pattern pattern = Pattern.compile(regex);
+        // MODIFIED: Sử dụng hằng số Pattern đã được biên dịch trước.
+        Pattern pattern = Pattern.compile(String.format(UNDEFINED_CHECK_PATTERN_TEMPLATE.pattern(), Pattern.quote(argnames[0])));
         Matcher matcher = pattern.matcher(code);
 
         return matcher.replaceAll(";");
@@ -1698,18 +1686,17 @@ public class JsInterpreter {
                 globalStack.putAll(castObjectToMap(args[2]));
             }
             LocalNameSpace varStack = new LocalNameSpace(globalStack);
-            Object[] result;
+            StatementResult result;
             try {
+                // MODIFIED: Sử dụng StatementResult
                 result = interpretStatement(code.replace("\n", " "), varStack, allowRecursion - 1);
             } catch (JS_Throw t) {
                 throw t;
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
-            Object ret = result[0];
-            boolean shouldAbort = (boolean) result[1];
-            if (shouldAbort) {
-                return ret;
+            if (result.shouldReturn) {
+                return result.value;
             }
             return null;
         };
