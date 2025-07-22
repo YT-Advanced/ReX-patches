@@ -638,7 +638,7 @@ public class JsInterpreter {
         int delimLen = delim.length() - 1;
         char inQuoteChar = '\0';
         boolean escaping = false;
-        String afterOp = "ytTrue";
+        char lastOpChar = '\1';
         boolean inRegexCharGroup = false;
 
         List<String> parts = new ArrayList<>();
@@ -652,20 +652,18 @@ public class JsInterpreter {
                     counters.put(ch, counter - 1);
                 }
             } else if (!escaping) {
-                if (isQuote(ch) && (inQuoteChar == ch || inQuoteChar == '\0') && (inQuoteChar != '\0' || !Objects.equals(afterOp, "ytFalse") || ch != '/')) {
+                if (isQuote(ch) && (inQuoteChar == ch || inQuoteChar == '\0') && (inQuoteChar != '\0' || lastOpChar != '\0' || ch != '/')) {
                     inQuoteChar = (inQuoteChar != '\0' && !inRegexCharGroup) ? '\0' : ch;
                 } else if (inQuoteChar == '/' && (ch == '[' || ch == ']')) {
                     inRegexCharGroup = ch == '[';
                 }
             }
             escaping = (!escaping && inQuoteChar != '\0' && ch == '\\');
-            boolean inUnaryOp = (inQuoteChar == '\0' && !inRegexCharGroup && (!Objects.equals(afterOp, "ytFalse") && !Objects.equals(afterOp, "ytTrue")) && (ch == '-' || ch == '+'));
+            boolean inUnaryOp = (inQuoteChar == '\0' && !inRegexCharGroup && (lastOpChar != '\0' && lastOpChar != '\1') && (ch == '-' || ch == '+'));
             if (inQuoteChar == '\0' && isOpChar(ch)) {
-                afterOp = Character.toString(ch);
-            } else if (Character.isWhitespace(ch) && !Objects.equals(afterOp, "ytFalse")) {
-                afterOp = afterOp;
-            } else {
-                afterOp = "ytFalse";
+                lastOpChar = ch;
+            } else if (!Character.isWhitespace(ch)) {
+                lastOpChar = '\0';
             }
 
             if (ch != delim.charAt(pos) || anyCountersNonZero(counters) || inQuoteChar != '\0' || inUnaryOp) {
